@@ -22,6 +22,7 @@ import java.util.List;
  **************************************************************************
  */
 public class MyProtocol extends IRDTProtocol {
+    static final int MaxSeqNum = 12;
 
     static final int SWS = 6;
 
@@ -29,14 +30,13 @@ public class MyProtocol extends IRDTProtocol {
 
     // change the following as you wish:
     static final int HEADERSIZE=1;   // number of header bytes in each packet
-    static final int DATASIZE=128;   // max. number of user data bytes in each packet
+    static final int DATASIZE=511;   // max. number of user data bytes in each packet
 
     List<Integer> acknowledgedSegnums = new ArrayList<>();
     List<Integer[]> packetBuffer = new ArrayList<>();
 
     @Override
     public void sender() {
-        System.out.println("Dit is onze code");
         System.out.println("Sending...");
 
         // read from the input file
@@ -69,13 +69,15 @@ public class MyProtocol extends IRDTProtocol {
             boolean stop = false;
             while (!stop) {
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(5);
                     Integer[] acknowledgePacket = getNetworkLayer().receivePacket();
                     if (acknowledgePacket != null && (LAF < acknowledgePacket[0] || LAF == SWS)
                         && acknowledgePacket[0] <= LFS) {
                         acknowledgedSegnums.add(acknowledgePacket[0]);
+                        packetBuffer.remove(acknowledgePacket[0]);
+                        sentNext();
                         LAF = acknowledgePacket[0];
-                        System.out.println("Acknowledge received: " + acknowledgePacket[0]);
+                        //System.out.println("Acknowledge received: " + acknowledgePacket[0]);
                         stop = true;
                     }
                 } catch (InterruptedException e) {
@@ -90,12 +92,12 @@ public class MyProtocol extends IRDTProtocol {
     @Override
     public void TimeoutElapsed(Object tag) {
         int z=(Integer)tag;
-        // handle expiration of the timeout:
-        System.out.println("this Timer expired with tag="+z);
         // check if package was acknowledged
         if (acknowledgedSegnums.contains((Integer)tag)) {
             acknowledgedSegnums.remove((Integer) tag);
         } else {
+            // handle expiration of the timeout:
+            System.out.println("this Timer expired with tag="+z);
             // Resend the packet
             Integer[] retransmitPkt = findPacketSegNum((Integer) tag);
             sentPacket(retransmitPkt);
@@ -109,7 +111,7 @@ public class MyProtocol extends IRDTProtocol {
         Integer[] acknowledgePacket = new Integer[1];
 
         int LFR = -1;
-        int LAF = LFR + RWS;
+        int LAF = LFR + RWS;  //0
 
         // create the array that will contain the file contents
         // note: we don't know yet how large the file will be, so the easiest (but not most efficient)
@@ -127,7 +129,7 @@ public class MyProtocol extends IRDTProtocol {
                 // tell the user
                 System.out.println("Received packet, length="+packet.length+"  first byte="+packet[0] );
 
-                if (packet[0] <= LAF || packet[0] == 255) {
+                if (packet[0] == LAF || packet[0] == 255) {
                     acknowledgePacket[0] = packet[0];
                     LFR = packet[0];
                     if (LAF < SWS) {
@@ -135,7 +137,7 @@ public class MyProtocol extends IRDTProtocol {
                     } else { LAF = 0; }
                     // append the packet's data part (excluding the header) to the fileContents array, first making it larger
                     getNetworkLayer().sendPacket(acknowledgePacket);
-                    System.out.println("Sent acknowledgment");
+                    System.out.println("Sent acknowledgment" + acknowledgePacket[0]);
                     int oldlength=fileContents.length;
                     int datalen= packet.length - HEADERSIZE;
                     fileContents = Arrays.copyOf(fileContents, oldlength+datalen);
@@ -144,10 +146,10 @@ public class MyProtocol extends IRDTProtocol {
                         stop = true;
                     }
                 }
-            }else{
+            } else {
                 // wait ~10ms (or however long the OS makes us wait) before trying again
                 try {
-                    Thread.sleep(10);
+                    Thread.sleep(5);
                 } catch (InterruptedException e) {
                     stop = true;
                 }
@@ -155,6 +157,10 @@ public class MyProtocol extends IRDTProtocol {
         }
         // return the output file
         return fileContents;
+    }
+
+    public void sentNext() {
+
     }
 
     public void sentPacket(Integer[] pkt) {
@@ -166,7 +172,7 @@ public class MyProtocol extends IRDTProtocol {
         System.out.println("Sent one packet with header=" + pkt[0]);
 
         // schedule a timer for 1000 ms into the future, just to show how that works:
-        framework.Utils.Timeout.SetTimeout(1250, this, pkt[0]);
+        framework.Utils.Timeout.SetTimeout(1000, this, pkt[0]);
     }
 
     public Integer[] findPacketSegNum(int segNum) {
@@ -176,5 +182,15 @@ public class MyProtocol extends IRDTProtocol {
             }
         }
         return null;
+    }
+
+    public void prepDataIntoList() {
+
+    }
+
+    public boolean checkSendingWindow(int segNum, int LFS, int LAF) {
+        int upperbound = LAF + 1 + SWS > MaxSeqNum ? SWS - (MaxSeqNum - LFS) : LAF + 1 + SWS;
+        int lowerBound = LAF + 1 > MaxSeqNum ? 0 : LAF + 1;
+        return lowerBound <= segNum || segNum <= upperbound;
     }
 }
